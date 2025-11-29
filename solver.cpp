@@ -35,10 +35,11 @@ double Solver::computePenalty() const {
     for (const int w : weights) {
         sumW += w;
     }
-    return sumW + 1; // any unsat assignment worse than any sat
+    return sumW;
 }
 
 // E = unsat * penalty - sum(weights of vars set to 1)
+// This heavily unfavours assignments where there is an unsatisfied clause
 double Solver::energy(const vector<bool>& assign,
                          double penalty,
                          int& unsatOut,
@@ -81,19 +82,19 @@ bool Solver::load(const string& filename) {
         cerr << "Failed to open file: " << filename << "\n";
         return false;
     }
-    instanceName = std::filesystem::path(filename).stem().string();
+    instanceName = filesystem::path(filename).stem().string();
 
     string line;
 
     // 1) Read header line: p mwcnf <numVars> <numClauses>
-    while (std::getline(in, line)) {
+    while (getline(in, line)) {
         if (line.empty() || line[0] == 'c')
             continue;  // skip comments and empty lines
 
         if (line[0] == 'p') {
-            std::istringstream iss(line);
+            istringstream iss(line);
             char p;
-            std::string format;
+            string format;
             iss >> p >> format >> numVars >> numClauses;
             break;
         }
@@ -109,12 +110,12 @@ bool Solver::load(const string& filename) {
 
     // 2) Read weights line: w w1 w2 ... wn 0
     bool haveWeights = false;
-    while (std::getline(in, line)) {
+    while (getline(in, line)) {
         if (line.empty() || line[0] == 'c')
             continue;
 
         if (line[0] == 'w') {
-            std::istringstream iss(line);
+            istringstream iss(line);
             char wchar;
             iss >> wchar; // consume 'w'
 
@@ -135,20 +136,20 @@ bool Solver::load(const string& filename) {
     }
 
     // 3) Remaining (non-comment) lines are clauses, each terminated by 0
-    while (std::getline(in, line)) {
+    while (getline(in, line)) {
         if (line.empty() || line[0] == 'c')
             continue;  // skip comments
 
-        std::istringstream iss(line);
+        istringstream iss(line);
         int lit;
-        std::vector<int> clause;
+        vector<int> clause;
 
         while (iss >> lit && lit != 0) {
             clause.emplace_back(lit);  // literals are in DIMACS style: ±1..±numVars
         }
 
         if (!clause.empty()) {
-            clauses.emplace_back(std::move(clause));
+            clauses.emplace_back(move(clause));
         }
     }
 
@@ -175,7 +176,7 @@ vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) const {
 
 void Solver::solve(const SAParams& inParams) {
     if (numVars == 0 || weights.empty() || clauses.empty()) {
-        std::cerr << "Solver::solve: instance not loaded.\n";
+        cerr << "Solver::solve: instance not loaded.\n";
         return;
     }
     params = inParams;
@@ -212,7 +213,8 @@ void Solver::solve(const SAParams& inParams) {
                 // It is simply better
                 accept = true;
             } else {
-                // We accept it with probability
+                // We accept it with a probability,
+                // which decreases as time goes on - diversification -> intensification
                 const double u = static_cast<double>(rand()) / RAND_MAX; // random(0,1)
                 const double prob = exp(-deltaE / T);
                 if (u < prob) {
@@ -222,7 +224,7 @@ void Solver::solve(const SAParams& inParams) {
 
             if (accept) {
                 // We accept the new state
-                current = std::move(neighbour);
+                current = move(neighbour);
                 Ecur = Enew;
                 unsatCur = unsatNew;
                 weightCur = weightNew;
@@ -240,36 +242,29 @@ void Solver::solve(const SAParams& inParams) {
 }
 
 // Corresponds to the .dat format
-void Solver::printBestSolution(std::ostream& os) const {
+void Solver::printBestSolution(ostream& os) const {
     // todo: probably print the debug info, not just the .dat results
     if (bestAssignment.empty()) {
         cerr << "Solver::printBestSolution: no solution available.\n";
         return;
     }
-
-    // Instance name
     cout << instanceName << ' ';
-
-    // Best weight (objective value)
     cout << bestWeight << ' ';
-
     // Assignment as ±var index, variables are 1..numVars
     for (int i = 0; i < numVars; ++i) {
         int lit = bestAssignment[i] ? (i + 1) : -(i + 1);
         cout << lit << ' ';
     }
-
-    // Terminating 0 and newline
     cout << 0 << '\n';
 }
 
 void Solver::printBestSolution() const {
-    printBestSolution(std::cout);
+    printBestSolution(cout);
 }
 
 void Solver::printCompleteSolution() const {
     if (bestAssignment.empty()) {
-        std::cerr << "Solver::printCompleteSolution: no solution available.\n";
+        cerr << "Solver::printCompleteSolution: no solution available.\n";
         return;
     }
 
@@ -284,10 +279,32 @@ void Solver::printCompleteSolution() const {
     // Should ideally == totalClauses and unsat == 0
     int satisfied = numClauses - unsat;
 
-    std::cout << "Instance: " << instanceName << '\n';
-    std::cout << "Best weight: " << bestWeight << '\n';
-    std::cout << "Satisfied clauses: " << satisfied << '\n';
-    std::cout << "Unsatisfied clauses: " << unsat << '\n';
-    std::cout << "Total steps: " << steps << '\n';
+    cout << "Instance: " << instanceName << '\n';
+    cout << "Best weight: " << bestWeight << '\n';
+    cout << "Satisfied clauses: " << satisfied << '\n';
+    cout << "Unsatisfied clauses: " << unsat << '\n';
+    cout << "Total steps: " << steps << '\n';
+}
+
+void Solver::printCompleteFormattedSolution(std::ostream& os) const {
+    if (bestAssignment.empty()) {
+        std::cerr << "Solver::printCompleteFormattedSolution: no solution available.\n";
+        return;
+    }
+
+    const double penalty = computePenalty();
+    int unsat = 0;
+    int weight = 0;
+
+    (void) energy(bestAssignment, penalty, unsat, weight);
+
+    int satisfied = numClauses - unsat;
+
+    // CSV: instanceName,bestWeight,satisfied,unsatisfied,steps
+    os << instanceName << ','
+       << bestWeight   << ','
+       << satisfied    << ','
+       << unsat        << ','
+       << steps        << '\n';
 }
 

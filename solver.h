@@ -55,6 +55,9 @@ class Solver {
         void printBestSolution() const;
         void printBestSolution(std::ostream& os) const;
         void printCompleteSolution() const;
+        void printCompleteFormattedSolution(std::ostream& os) const;
+
+
 
 };
 
