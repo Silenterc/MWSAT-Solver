@@ -6,6 +6,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <random>
 
 using namespace std;
 
@@ -29,17 +30,17 @@ int main(int argc, char* argv[]) {
     params.tempMin = tempMin;
     params.itersPerTemp = itersPerTemp;
 
-    // Seed RNG
-    srand(static_cast<unsigned int>(time(nullptr)));
+    std::random_device rd;
 
     Solver solver;
+    solver.setSeed(rd());
     if (!solver.load(instancePath)) {
         return 1;
     }
 
     solver.solve(params);
 
-    solver.printCompleteSolution();
+    //solver.printCompleteSolution();
 
     // Always print .dat line to stdout
     //solver.printBestSolution();
@@ -52,7 +53,7 @@ int main(int argc, char* argv[]) {
             cerr << "Failed to open output file for writing: " << outPath << "\n";
             return 1;
         }
-        solver.printBestSolution(out);
+        solver.printCompleteFormattedSolution(out);
     }
 
     return 0;

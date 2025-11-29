@@ -6,6 +6,7 @@
 #define KOP2_SOLVER_H
 #include <string>
 #include <vector>
+#include <random>
 using namespace std;
 
 // Simulated annealing parameters
@@ -28,6 +29,7 @@ class Solver {
     vector<vector<int>> clauses;
     string instanceName;
     SAParams params;
+    std::mt19937 rng;
 
     vector<bool> bestAssignment;
     double bestEnergy = 0;
@@ -45,11 +47,13 @@ class Solver {
                      double penalty,
                      int& unsatOut,
                      int& weightOut) const;
-    vector<bool> getInitialAssignment() const;
-    vector<bool> getNeighbourAssignment(vector<bool> assignment) const;
+    int countUnsatisfiedClauses(const vector<bool>& assign) const;
+    vector<bool> getInitialAssignment();
+    vector<bool> getNeighbourAssignment(vector<bool> assignment);
 
     public:
-        Solver() = default;
+        Solver();
+        void setSeed(std::mt19937::result_type seed);
         bool load(const string& filename);
         void solve(const SAParams& params);
         void printBestSolution() const;

@@ -8,6 +8,14 @@
 #include <filesystem>
 #include <cmath>
 #include <cstdlib>
+#include <random>
+#include <algorithm>
+
+Solver::Solver() : rng(random_device{}()) {}
+
+void Solver::setSeed(mt19937::result_type seed) {
+    rng.seed(seed);
+}
 
 void Solver::clearAll() {
     numVars = 0;
@@ -32,10 +40,12 @@ bool Solver::equilibrium(int iterAtTemp) const {
 // Penalty for each unsatisfied clause (Its very big)
 double Solver::computePenalty() const {
     int sumW = 0;
+    int maxW = 0;
     for (const int w : weights) {
         sumW += w;
+        maxW = max(maxW, w);
     }
-    return sumW;
+    return maxW;
 }
 
 // E = unsat * penalty - sum(weights of vars set to 1)
@@ -52,22 +62,7 @@ double Solver::energy(const vector<bool>& assign,
         }
     }
 
-    int unsat = 0;
-    for (const auto& clause : clauses) {
-        bool sat = false;
-        for (int lit : clause) {
-            int varIdx = abs(lit) - 1; // 0-based index
-            bool val = assign[varIdx];
-            if ((lit > 0 && val) || (lit < 0 && !val)) {
-                // If any literal is satisfied, its enough (OR)
-                sat = true;
-                break;
-            }
-        }
-        if (!sat) {
-            ++unsat;
-        }
-    }
+    const int unsat = countUnsatisfiedClauses(assign);
 
     unsatOut = unsat;
     weightOut = wSum;
@@ -156,19 +151,98 @@ bool Solver::load(const string& filename) {
     return true;
 }
 
-vector<bool> Solver::getInitialAssignment() const {
+int Solver::countUnsatisfiedClauses(const vector<bool>& assign) const {
+    int unsat = 0;
+    for (const auto& clause : clauses) {
+        bool satisfied = false;
+        for (int lit : clause) {
+            int varIdx = abs(lit) - 1;
+            bool val = assign[varIdx];
+            if ((lit > 0 && val) || (lit < 0 && !val)) {
+                satisfied = true;
+                break;
+            }
+        }
+        if (!satisfied) {
+            ++unsat;
+        }
+    }
+    return unsat;
+}
+
+vector<bool> Solver::getInitialAssignment() {
     vector<bool> current(numVars);
+    uniform_int_distribution<int> bitDist(0, 1);
     // Initial random assignment, indexed from 0
     for (int i = 0; i < numVars; ++i) {
-        current[i] = rand() % 2; // 0 or 1
+        current[i] = static_cast<bool>(bitDist(rng));
     }
     return current;
 }
 
-vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) const {
-    int index = rand() % numVars;
-    // Flip random bit
-    assignment[index] = !assignment[index];
+vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) {
+    // Identify unsatisfied clauses for the current assignment
+    vector<int> unsatisfiedIdx;
+    for (int ci = 0; ci < clauses.size(); ci++) {
+        const auto& clause = clauses[ci];
+        bool satisfied = false;
+        for (int lit : clause) {
+            int varIdx = abs(lit) - 1;
+            bool val = assignment[varIdx];
+            if ((lit > 0 && val) || (lit < 0 && !val)) {
+                satisfied = true;
+                break;
+            }
+        }
+        if (!satisfied) {
+            unsatisfiedIdx.push_back(ci);
+        }
+    }
+    // TODO: TRY THIS OUT
+    bernoulli_distribution doRandom(0);
+    // If everything is already satisfied or 0.5, fall back to a random flip for diversification
+    if (unsatisfiedIdx.empty() || doRandom(rng)) {
+        uniform_int_distribution indexDist(0, numVars - 1);
+        int index = indexDist(rng);
+        assignment[index] = !assignment[index];
+        return assignment;
+    }
+
+    // 1) pick a random unsatisfied clause
+    uniform_int_distribution<size_t> unsatDist(0, unsatisfiedIdx.size() - 1);
+    const auto& clause = clauses[unsatisfiedIdx[unsatDist(rng)]];
+
+    // 2) sample up to N variables from the chosen clause
+    const size_t maxCandidates = 3;
+    const size_t candidatesToPick = min(maxCandidates, clause.size());
+    // Could be a set too but for such a short arr it doesnt matter
+    vector<int> candidates;
+    uniform_int_distribution<size_t> litPosDist(0, clause.size() - 1);
+    while (candidates.size() < candidatesToPick) {
+        int lit = clause[litPosDist(rng)];
+        int varIdx = abs(lit) - 1;
+        // If its not there yet
+        if (find(candidates.begin(), candidates.end(), varIdx) == candidates.end()) {
+            candidates.push_back(varIdx);
+        }
+    }
+
+    // 3) evaluate candidates and pick the one with the highest number of satisfied clauses
+    int bestVar = candidates.front();
+    int bestSat = -1;
+    for (int varIdx : candidates) {
+        assignment[varIdx] = !assignment[varIdx];
+        int unsat = countUnsatisfiedClauses(assignment);
+        int sat = numClauses - unsat;
+        assignment[varIdx] = !assignment[varIdx]; // revert
+
+        if (sat > bestSat) {
+            bestSat = sat;
+            bestVar = varIdx;
+        }
+    }
+
+    assignment[bestVar] = !assignment[bestVar];
     return assignment;
 }
 
@@ -286,9 +360,9 @@ void Solver::printCompleteSolution() const {
     cout << "Total steps: " << steps << '\n';
 }
 
-void Solver::printCompleteFormattedSolution(std::ostream& os) const {
+void Solver::printCompleteFormattedSolution(ostream& os) const {
     if (bestAssignment.empty()) {
-        std::cerr << "Solver::printCompleteFormattedSolution: no solution available.\n";
+        cerr << "Solver::printCompleteFormattedSolution: no solution available.\n";
         return;
     }
 
@@ -307,4 +381,3 @@ void Solver::printCompleteFormattedSolution(std::ostream& os) const {
        << unsat        << ','
        << steps        << '\n';
 }
-
