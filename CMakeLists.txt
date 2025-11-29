@@ -9,3 +9,5 @@ add_executable(kop2
         main.cpp
         solver.cpp
         solver.h)
+
+set(CMAKE_CXX_FLAGS "-O3 -DNDEBUG")

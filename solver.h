@@ -8,6 +8,18 @@
 #include <vector>
 using namespace std;
 
+// Simulated annealing parameters
+struct SAParams {
+    // Starting temperature, 1 <= tempStart < ...
+    double tempStart;
+    // Cooling factor <= 1, is usually > 0.9
+    double alpha;
+    // Minimal temperature, 0 < tempMin < tempStart
+    double tempMin;
+    // How many configurations the algorithm tries before changing temperature
+    int itersPerTemp;
+};
+
 class Solver {
     int numVars = 0;
     int numClauses = 0;
@@ -15,10 +27,34 @@ class Solver {
     vector<int> weights;
     vector<vector<int>> clauses;
     string instanceName;
+    SAParams params;
+
+    vector<bool> bestAssignment;
+    double bestEnergy = 0;
+    int bestWeight = 0;
+    int steps = 0;
+
+    void clearAll();
+    double cool(double T) const;
+    bool frozen(double T) const;
+    bool equilibrium(int iterAtTemp) const;
+
+    double computePenalty() const;
+
+    double energy(const vector<bool>& assign,
+                     double penalty,
+                     int& unsatOut,
+                     int& weightOut) const;
+    vector<bool> getInitialAssignment() const;
+    vector<bool> getNeighbourAssignment(vector<bool> assignment) const;
 
     public:
-        Solver();
+        Solver() = default;
         bool load(const string& filename);
+        void solve(const SAParams& params);
+        void printBestSolution() const;
+        void printBestSolution(std::ostream& os) const;
+        void printCompleteSolution() const;
 
 };
 
