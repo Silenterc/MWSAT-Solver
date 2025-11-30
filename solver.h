@@ -31,6 +31,7 @@ class Solver {
     SAParams params;
     std::mt19937 rng;
 
+    double penaltyCoefficient;
     vector<bool> bestAssignment;
     double bestEnergy = 0;
     int bestWeight = 0;
@@ -40,8 +41,9 @@ class Solver {
     double cool(double T) const;
     bool frozen(double T) const;
     bool equilibrium(int iterAtTemp) const;
+    long long computeMaxStagnation() const;
 
-    double computePenalty() const;
+    double computeBasePenalty() const;
 
     double energy(const vector<bool>& assign,
                      double penalty,
@@ -55,7 +57,7 @@ class Solver {
         Solver();
         void setSeed(std::mt19937::result_type seed);
         bool load(const string& filename);
-        void solve(const SAParams& params);
+        void solve(const SAParams& params, ostream* trace = nullptr);
         void printBestSolution() const;
         void printBestSolution(std::ostream& os) const;
         void printCompleteSolution() const;

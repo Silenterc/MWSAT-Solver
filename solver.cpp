@@ -37,18 +37,35 @@ bool Solver::equilibrium(int iterAtTemp) const {
     return iterAtTemp >= params.itersPerTemp;
 }
 
-// Penalty for each unsatisfied clause (Its very big)
-double Solver::computePenalty() const {
-    int sumW = 0;
-    int maxW = 0;
-    for (const int w : weights) {
-        sumW += w;
-        maxW = max(maxW, w);
-    }
-    return maxW;
+long long Solver::computeMaxStagnation() const {
+    // Compute the cooling steps
+    // It is: K = (ln(T_min) - ln(T_start)) / ln(alpha)
+    double numerator = log(params.tempMin) - log(params.tempStart);
+    double denominator = log(params.alpha);
+
+    long long coolingSteps = static_cast<long long>(ceil(numerator / denominator));
+
+    long long totalIterations = coolingSteps * params.itersPerTemp;
+
+    // Set to 50%, TODO experiment
+    long long calculatedStagnation = totalIterations / 10;
+
+    // If there are not enough steps
+    long long minimumSteps = static_cast<long long>(numVars) * 100;
+
+    return max(calculatedStagnation, minimumSteps);
 }
 
-// E = unsat * penalty - sum(weights of vars set to 1)
+// Base penalty for clause - max weight
+double Solver::computeBasePenalty() const {
+    int maxW = 0;
+    for (const int w : weights) {
+        maxW  = max(maxW, w);
+    }
+    return static_cast<double>(maxW);
+}
+
+// E = unsat * penalty + (idealSum - sum(weights of vars set to 1)) -> minimize to 0
 // This heavily unfavours assignments where there is an unsatisfied clause
 double Solver::energy(const vector<bool>& assign,
                          double penalty,
@@ -56,10 +73,12 @@ double Solver::energy(const vector<bool>& assign,
                          int& weightOut) const
 {
     int wSum = 0;
+    int idealSum = 0;
     for (int i = 0; i < numVars; ++i) {
         if (assign[i]) {
             wSum += weights[i];
         }
+        idealSum += weights[i];
     }
 
     const int unsat = countUnsatisfiedClauses(assign);
@@ -67,7 +86,7 @@ double Solver::energy(const vector<bool>& assign,
     unsatOut = unsat;
     weightOut = wSum;
 
-    return unsat * penalty - wSum;
+    return unsat * penalty + (idealSum - wSum);
 }
 
 bool Solver::load(const string& filename) {
@@ -198,7 +217,7 @@ vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) {
             unsatisfiedIdx.push_back(ci);
         }
     }
-    // TODO: TRY THIS OUT
+    // TODO: TRY THIS OUT - the more we use random, the better it is for M,N and worse for Q,R
     bernoulli_distribution doRandom(0);
     // If everything is already satisfied or 0.5, fall back to a random flip for diversification
     if (unsatisfiedIdx.empty() || doRandom(rng)) {
@@ -248,20 +267,30 @@ vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) {
 
 
 
-void Solver::solve(const SAParams& inParams) {
+void Solver::solve(const SAParams& inParams, ostream* trace) {
     if (numVars == 0 || weights.empty() || clauses.empty()) {
         cerr << "Solver::solve: instance not loaded.\n";
         return;
     }
     params = inParams;
+    // TESTED AND DOESNT HELP, SO ITS 1
+    penaltyCoefficient = 1.0;
+    long long maxStagnation = computeMaxStagnation();
+    long long stagnationCounter = 0;
 
     vector<bool> current = getInitialAssignment();
 
     // Initial energy
-    const double penalty = computePenalty();
+    double penalty = computeBasePenalty();
     int unsatCur;
     int weightCur;
     double Ecur = energy(current, penalty, unsatCur, weightCur);
+
+    if (trace) {
+        (*trace) << "step,energy,satisfied,unsatisfied,weight\n";
+        int satisfied = numClauses - unsatCur;
+        (*trace) << steps << "," << Ecur << "," << satisfied << "," << unsatCur << "," << weightCur << "\n";
+    }
 
     // Best so far
     bestAssignment = current;
@@ -289,7 +318,8 @@ void Solver::solve(const SAParams& inParams) {
             } else {
                 // We accept it with a probability,
                 // which decreases as time goes on - diversification -> intensification
-                const double u = static_cast<double>(rand()) / RAND_MAX; // random(0,1)
+                uniform_real_distribution<> dist(0, 1);
+                const double u = dist(rng);
                 const double prob = exp(-deltaE / T);
                 if (u < prob) {
                     accept = true;
@@ -302,6 +332,7 @@ void Solver::solve(const SAParams& inParams) {
                 Ecur = Enew;
                 unsatCur = unsatNew;
                 weightCur = weightNew;
+                stagnationCounter = 0;
 
                 // We possibly update the best state
                 if (Ecur < bestEnergy) {
@@ -309,9 +340,23 @@ void Solver::solve(const SAParams& inParams) {
                     bestAssignment = current;
                     bestWeight = weightCur;
                 }
+            } else {
+                stagnationCounter++;
+            }
+
+            // if (stagnationCounter >= maxStagnation) {
+            //     // RESET THE WHOLE RUN
+            //     stagnationCounter = 0;
+            //     current = getInitialAssignment();
+            //     Ecur = energy(current, penalty, unsatCur, weightCur);
+            // }
+            if (trace) {
+                int satisfied = numClauses - unsatCur;
+                (*trace) << steps << "," << Ecur << "," << satisfied << "," << unsatCur << "," << weightCur << "\n";
             }
             iter++;
         }
+        penalty *= penaltyCoefficient;
     }
 }
 
@@ -343,7 +388,7 @@ void Solver::printCompleteSolution() const {
     }
 
     // Recompute unsatisfied / weight for the best assignment
-    const double penalty = computePenalty();
+    const double penalty = computeBasePenalty();
     int unsat = 0;
     int weight = 0;
     // We ignore the returned energy - we only care about unsat and weightOut
@@ -366,7 +411,7 @@ void Solver::printCompleteFormattedSolution(ostream& os) const {
         return;
     }
 
-    const double penalty = computePenalty();
+    const double penalty = computeBasePenalty();
     int unsat = 0;
     int weight = 0;
 

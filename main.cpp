@@ -13,7 +13,7 @@ using namespace std;
 int main(int argc, char* argv[]) {
     if (argc < 6) {
         cerr << "Usage: " << argv[0]
-             << " instance.mwcnf tempStart alpha tempMin itersPerTemp [output.dat]\n";
+             << " instance.mwcnf tempStart alpha tempMin itersPerTemp [output.dat] [trace.csv]\n";
         return 1;
     }
 
@@ -38,22 +38,35 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    solver.solve(params);
+    ofstream outFile;
+    ofstream traceFile;
+    ostream* tracePtr = nullptr;
 
-    //solver.printCompleteSolution();
-
-    // Always print .dat line to stdout
-    //solver.printBestSolution();
-
-    // If 6th argument is given, append .dat line to that file
+    // Optional .dat output (append)
     if (argc >= 7) {
         const string outPath = argv[6];
-        ofstream out(outPath, ios::app);
-        if (!out) {
+        outFile.open(outPath, ios::app);
+        if (!outFile) {
             cerr << "Failed to open output file for writing: " << outPath << "\n";
             return 1;
         }
-        solver.printCompleteFormattedSolution(out);
+    }
+
+    // Optional trace CSV (overwrite)
+    if (argc >= 8) {
+        const string tracePath = argv[7];
+        traceFile.open(tracePath, ios::trunc);
+        if (!traceFile) {
+            cerr << "Failed to open trace file for writing: " << tracePath << "\n";
+            return 1;
+        }
+        tracePtr = &traceFile;
+    }
+
+    solver.solve(params, tracePtr);
+
+    if (outFile.is_open()) {
+        solver.printCompleteFormattedSolution(outFile);
     }
 
     return 0;
