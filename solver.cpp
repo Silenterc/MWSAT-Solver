@@ -48,7 +48,7 @@ long long Solver::computeMaxStagnation() const {
     long long totalIterations = coolingSteps * params.itersPerTemp;
 
     // Set to 50%, TODO experiment
-    long long calculatedStagnation = totalIterations / 10;
+    long long calculatedStagnation = totalIterations / 2;
 
     // If there are not enough steps
     long long minimumSteps = static_cast<long long>(numVars) * 100;
@@ -217,9 +217,8 @@ vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) {
             unsatisfiedIdx.push_back(ci);
         }
     }
-    // TODO: TRY THIS OUT - the more we use random, the better it is for M,N and worse for Q,R
-    bernoulli_distribution doRandom(0);
-    // If everything is already satisfied or 0.5, fall back to a random flip for diversification
+    // Random neighbour with 50% chance to maintain diversification
+    bernoulli_distribution doRandom(0.5);
     if (unsatisfiedIdx.empty() || doRandom(rng)) {
         uniform_int_distribution indexDist(0, numVars - 1);
         int index = indexDist(rng);
@@ -265,6 +264,27 @@ vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) {
     return assignment;
 }
 
+double Solver::energyPhaseUnsat(int unsat) const {
+    return static_cast<double>(unsat);
+}
+
+double Solver::energyPhaseWeight(int unsat, int weight) const {
+    if (unsat > 0) {
+        return 1e9 + unsat; // keep infeasible very high
+    }
+    return -static_cast<double>(weight);
+}
+
+int Solver::computeWeight(const vector<bool>& assign) const {
+    int w = 0;
+    for (int i = 0; i < numVars; ++i) {
+        if (assign[i]) {
+            w += weights[i];
+        }
+    }
+    return w;
+}
+
 
 
 void Solver::solve(const SAParams& inParams, ostream* trace) {
@@ -273,18 +293,17 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
         return;
     }
     params = inParams;
-    // TESTED AND DOESNT HELP, SO ITS 1
-    penaltyCoefficient = 1.0;
-    long long maxStagnation = computeMaxStagnation();
-    long long stagnationCounter = 0;
+    penaltyCoefficient = 1.0; // unused
 
     vector<bool> current = getInitialAssignment();
 
-    // Initial energy
-    double penalty = computeBasePenalty();
-    int unsatCur;
-    int weightCur;
-    double Ecur = energy(current, penalty, unsatCur, weightCur);
+    int weightCur = computeWeight(current);
+    int unsatCur = countUnsatisfiedClauses(current);
+
+    // Phase control: start in phase 1 (min unsat), switch to phase 2 once any feasible state found
+    bool optimizingWeight = (unsatCur == 0);
+    double Ecur = optimizingWeight ? energyPhaseWeight(unsatCur, weightCur)
+                                   : energyPhaseUnsat(unsatCur);
 
     if (trace) {
         (*trace) << "step,energy,satisfied,unsatisfied,weight\n";
@@ -292,12 +311,11 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
         (*trace) << steps << "," << Ecur << "," << satisfied << "," << unsatCur << "," << weightCur << "\n";
     }
 
-    // Best so far
     bestAssignment = current;
     bestEnergy = Ecur;
     bestWeight = weightCur;
+    int bestUnsat = unsatCur;
 
-    // Simulated annealing loop
     for (double T = params.tempStart; !frozen(T); T = cool(T)) {
         int iter = 0;
 
@@ -306,18 +324,16 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
 
             auto neighbour = getNeighbourAssignment(current);
 
-            int unsatNew;
-            int weightNew;
-            double Enew = energy(neighbour, penalty, unsatNew, weightNew);
+            int unsatNew = countUnsatisfiedClauses(neighbour);
+            int weightNew = computeWeight(neighbour);
+            double Enew = optimizingWeight ? energyPhaseWeight(unsatNew, weightNew)
+                                           : energyPhaseUnsat(unsatNew);
             double deltaE = Enew - Ecur;
 
             bool accept = false;
             if (deltaE <= 0.0) {
-                // It is simply better
                 accept = true;
             } else {
-                // We accept it with a probability,
-                // which decreases as time goes on - diversification -> intensification
                 uniform_real_distribution<> dist(0, 1);
                 const double u = dist(rng);
                 const double prob = exp(-deltaE / T);
@@ -327,36 +343,36 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
             }
 
             if (accept) {
-                // We accept the new state
-                current = move(neighbour);
+                current = std::move(neighbour);
                 Ecur = Enew;
                 unsatCur = unsatNew;
                 weightCur = weightNew;
-                stagnationCounter = 0;
 
-                // We possibly update the best state
-                if (Ecur < bestEnergy) {
+                // Switch to weight optimization once a feasible state is reached
+                if (!optimizingWeight && unsatCur == 0) {
+                    optimizingWeight = true;
+                    Ecur = energyPhaseWeight(unsatCur, weightCur);
+                }
+
+                // Update best: unsat first, then weight when feasible
+                if (unsatCur < bestUnsat) {
+                    bestUnsat = unsatCur;
+                    bestWeight = weightCur;
                     bestEnergy = Ecur;
                     bestAssignment = current;
+                } else if (unsatCur == bestUnsat && unsatCur == 0 && weightCur > bestWeight) {
                     bestWeight = weightCur;
+                    bestEnergy = Ecur;
+                    bestAssignment = current;
                 }
-            } else {
-                stagnationCounter++;
             }
 
-            // if (stagnationCounter >= maxStagnation) {
-            //     // RESET THE WHOLE RUN
-            //     stagnationCounter = 0;
-            //     current = getInitialAssignment();
-            //     Ecur = energy(current, penalty, unsatCur, weightCur);
-            // }
             if (trace) {
                 int satisfied = numClauses - unsatCur;
                 (*trace) << steps << "," << Ecur << "," << satisfied << "," << unsatCur << "," << weightCur << "\n";
             }
             iter++;
         }
-        penalty *= penaltyCoefficient;
     }
 }
 

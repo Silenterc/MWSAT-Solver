@@ -52,6 +52,10 @@ class Solver {
     int countUnsatisfiedClauses(const vector<bool>& assign) const;
     vector<bool> getInitialAssignment();
     vector<bool> getNeighbourAssignment(vector<bool> assignment);
+    double energyPhaseUnsat(int unsat) const;
+    double energyPhaseWeight(int unsat, int weight) const;
+    int computeWeight(const vector<bool>& assign) const;
+    void annealLoop(vector<bool>& current, double& Ecur, int& unsatCur, int& weightCur, bool& optimizingWeight, ostream* trace);
 
     public:
         Solver();
