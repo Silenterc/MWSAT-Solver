@@ -48,7 +48,7 @@ long long Solver::computeMaxStagnation() const {
     long long totalIterations = coolingSteps * params.itersPerTemp;
 
     // Set to 50%, TODO experiment
-    long long calculatedStagnation = totalIterations / 2;
+    long long calculatedStagnation = totalIterations / 10;
 
     // If there are not enough steps
     long long minimumSteps = static_cast<long long>(numVars) * 100;
@@ -59,14 +59,15 @@ long long Solver::computeMaxStagnation() const {
 // Base penalty for clause - max weight
 double Solver::computeBasePenalty() const {
     int maxW = 0;
+    int sumW = 0;
     for (const int w : weights) {
         maxW  = max(maxW, w);
+        sumW += w;
     }
-    return static_cast<double>(maxW);
+    return sumW;
 }
 
-// E = unsat * penalty + (idealSum - sum(weights of vars set to 1)) -> minimize to 0
-// This heavily unfavours assignments where there is an unsatisfied clause
+// E = NORMALIZE[unsat * penalty + (idealSum - sum(weights of vars set to 1))] -> minimize to 0
 double Solver::energy(const vector<bool>& assign,
                          double penalty,
                          int& unsatOut,
@@ -85,8 +86,11 @@ double Solver::energy(const vector<bool>& assign,
 
     unsatOut = unsat;
     weightOut = wSum;
+    auto preEnergy = unsat * penalty + (idealSum - wSum);
+    auto avgWeight = idealSum / numVars;
 
-    return unsat * penalty + (idealSum - wSum);
+    // Normalize the weights
+    return preEnergy / avgWeight;
 }
 
 bool Solver::load(const string& filename) {
@@ -217,9 +221,8 @@ vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) {
             unsatisfiedIdx.push_back(ci);
         }
     }
-    // Random neighbour with 50% chance to maintain diversification
-    bernoulli_distribution doRandom(0.5);
-    if (unsatisfiedIdx.empty() || doRandom(rng)) {
+
+    if (unsatisfiedIdx.empty()) {
         uniform_int_distribution indexDist(0, numVars - 1);
         int index = indexDist(rng);
         assignment[index] = !assignment[index];
@@ -230,59 +233,39 @@ vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) {
     uniform_int_distribution<size_t> unsatDist(0, unsatisfiedIdx.size() - 1);
     const auto& clause = clauses[unsatisfiedIdx[unsatDist(rng)]];
 
-    // 2) sample up to N variables from the chosen clause
-    const size_t maxCandidates = 3;
-    const size_t candidatesToPick = min(maxCandidates, clause.size());
-    // Could be a set too but for such a short arr it doesnt matter
-    vector<int> candidates;
-    uniform_int_distribution<size_t> litPosDist(0, clause.size() - 1);
-    while (candidates.size() < candidatesToPick) {
-        int lit = clause[litPosDist(rng)];
-        int varIdx = abs(lit) - 1;
-        // If its not there yet
-        if (find(candidates.begin(), candidates.end(), varIdx) == candidates.end()) {
-            candidates.push_back(varIdx);
-        }
+    bernoulli_distribution doNoise(0.5);
+
+    int bestVar = -1;
+
+    if (doNoise(rng)) {
+        // Random
+        // I get a random literal
+        uniform_int_distribution<size_t> litPosDist(0, clause.size() - 1);
+        bestVar = abs(clause[litPosDist(rng)]) - 1;
     }
+    else {
+        // Greedy
+        // I find the literal that helps the most
+        int bestNetGain = -9999999;
 
-    // 3) evaluate candidates and pick the one with the highest number of satisfied clauses
-    int bestVar = candidates.front();
-    int bestSat = -1;
-    for (int varIdx : candidates) {
-        assignment[varIdx] = !assignment[varIdx];
-        int unsat = countUnsatisfiedClauses(assignment);
-        int sat = numClauses - unsat;
-        assignment[varIdx] = !assignment[varIdx]; // revert
+        for (int lit : clause) {
+            int varIdx = abs(lit) - 1;
 
-        if (sat > bestSat) {
-            bestSat = sat;
-            bestVar = varIdx;
+            assignment[varIdx] = !assignment[varIdx];
+            int currentUnsat = countUnsatisfiedClauses(assignment);
+            int currentGain = -currentUnsat;
+
+            assignment[varIdx] = !assignment[varIdx];
+
+            if (currentGain > bestNetGain) {
+                bestNetGain = currentGain;
+                bestVar = varIdx;
+            }
         }
     }
 
     assignment[bestVar] = !assignment[bestVar];
     return assignment;
-}
-
-double Solver::energyPhaseUnsat(int unsat) const {
-    return static_cast<double>(unsat);
-}
-
-double Solver::energyPhaseWeight(int unsat, int weight) const {
-    if (unsat > 0) {
-        return 1e9 + unsat; // keep infeasible very high
-    }
-    return -static_cast<double>(weight);
-}
-
-int Solver::computeWeight(const vector<bool>& assign) const {
-    int w = 0;
-    for (int i = 0; i < numVars; ++i) {
-        if (assign[i]) {
-            w += weights[i];
-        }
-    }
-    return w;
 }
 
 
@@ -293,17 +276,18 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
         return;
     }
     params = inParams;
-    penaltyCoefficient = 1.0; // unused
+    // TESTED AND DOESNT HELP, SO ITS 1
+    penaltyCoefficient = 1.0;
+    long long maxStagnation = computeMaxStagnation();
+    long long stagnationCounter = 0;
 
     vector<bool> current = getInitialAssignment();
 
-    int weightCur = computeWeight(current);
-    int unsatCur = countUnsatisfiedClauses(current);
-
-    // Phase control: start in phase 1 (min unsat), switch to phase 2 once any feasible state found
-    bool optimizingWeight = (unsatCur == 0);
-    double Ecur = optimizingWeight ? energyPhaseWeight(unsatCur, weightCur)
-                                   : energyPhaseUnsat(unsatCur);
+    // Initial energy
+    double penalty = computeBasePenalty();
+    int unsatCur;
+    int weightCur;
+    double Ecur = energy(current, penalty, unsatCur, weightCur);
 
     if (trace) {
         (*trace) << "step,energy,satisfied,unsatisfied,weight\n";
@@ -311,11 +295,13 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
         (*trace) << steps << "," << Ecur << "," << satisfied << "," << unsatCur << "," << weightCur << "\n";
     }
 
+    // Best so far
     bestAssignment = current;
     bestEnergy = Ecur;
     bestWeight = weightCur;
-    int bestUnsat = unsatCur;
+    int bestUnsat = numClauses;
 
+    // Simulated annealing loop
     for (double T = params.tempStart; !frozen(T); T = cool(T)) {
         int iter = 0;
 
@@ -324,16 +310,18 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
 
             auto neighbour = getNeighbourAssignment(current);
 
-            int unsatNew = countUnsatisfiedClauses(neighbour);
-            int weightNew = computeWeight(neighbour);
-            double Enew = optimizingWeight ? energyPhaseWeight(unsatNew, weightNew)
-                                           : energyPhaseUnsat(unsatNew);
+            int unsatNew;
+            int weightNew;
+            double Enew = energy(neighbour, penalty, unsatNew, weightNew);
             double deltaE = Enew - Ecur;
 
             bool accept = false;
             if (deltaE <= 0.0) {
+                // It is simply better
                 accept = true;
             } else {
+                // We accept it with a probability,
+                // which decreases as time goes on - diversification -> intensification
                 uniform_real_distribution<> dist(0, 1);
                 const double u = dist(rng);
                 const double prob = exp(-deltaE / T);
@@ -343,36 +331,42 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
             }
 
             if (accept) {
-                current = std::move(neighbour);
+                // We accept the new state
+                current = move(neighbour);
                 Ecur = Enew;
                 unsatCur = unsatNew;
                 weightCur = weightNew;
+                stagnationCounter = 0;
 
-                // Switch to weight optimization once a feasible state is reached
-                if (!optimizingWeight && unsatCur == 0) {
-                    optimizingWeight = true;
-                    Ecur = energyPhaseWeight(unsatCur, weightCur);
-                }
-
-                // Update best: unsat first, then weight when feasible
-                if (unsatCur < bestUnsat) {
+                // We possibly update the best state
+                if (unsatCur == 0) {
+                    if (bestUnsat > 0 || weightCur > bestWeight) {
+                        bestUnsat = 0;
+                        bestWeight = weightCur;
+                        bestAssignment = current;
+                    }
+                } else if (bestUnsat > 0 && unsatCur < bestUnsat) {
                     bestUnsat = unsatCur;
                     bestWeight = weightCur;
-                    bestEnergy = Ecur;
-                    bestAssignment = current;
-                } else if (unsatCur == bestUnsat && unsatCur == 0 && weightCur > bestWeight) {
-                    bestWeight = weightCur;
-                    bestEnergy = Ecur;
                     bestAssignment = current;
                 }
+            } else {
+                stagnationCounter++;
             }
 
+            // if (stagnationCounter >= maxStagnation) {
+            //     // RESET THE WHOLE RUN
+            //     stagnationCounter = 0;
+            //     current = getInitialAssignment();
+            //     Ecur = energy(current, penalty, unsatCur, weightCur);
+            // }
             if (trace) {
                 int satisfied = numClauses - unsatCur;
                 (*trace) << steps << "," << Ecur << "," << satisfied << "," << unsatCur << "," << weightCur << "\n";
             }
             iter++;
         }
+       // penalty *= penaltyCoefficient;
     }
 }
 
