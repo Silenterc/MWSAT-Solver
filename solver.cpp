@@ -48,7 +48,7 @@ long long Solver::computeMaxStagnation() const {
     long long totalIterations = coolingSteps * params.itersPerTemp;
 
     // Set to 50%, TODO experiment
-    long long calculatedStagnation = totalIterations / 10;
+    long long calculatedStagnation = totalIterations / 2;
 
     // If there are not enough steps
     long long minimumSteps = static_cast<long long>(numVars) * 100;
@@ -66,6 +66,27 @@ double Solver::computeBasePenalty() const {
     }
     return sumW;
 }
+
+void Solver::setInitialParams() {
+    // Initial Temperature
+    int sumW = 0;
+    for (const int w : weights) {
+        sumW += w;
+    }
+    const int avgW = sumW / numVars;
+    const double initialTemp = -1 * (computeBasePenalty() / avgW + 1.0) / log(0.9);
+    params.tempStart = initialTemp;
+
+    // Final/Minimal Temperature
+    params.tempMin = -1 * (computeBasePenalty() / avgW + 1.0) / log(0.0001);
+
+    // Equilibrium size
+    params.itersPerTemp = numVars * 3;
+
+    // Alpha
+    params.alpha = 0.99;
+}
+
 
 // E = NORMALIZE[unsat * penalty + (idealSum - sum(weights of vars set to 1))] -> minimize to 0
 double Solver::energy(const vector<bool>& assign,
@@ -280,7 +301,7 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
     penaltyCoefficient = 1.0;
     long long maxStagnation = computeMaxStagnation();
     long long stagnationCounter = 0;
-
+    setInitialParams();
     vector<bool> current = getInitialAssignment();
 
     // Initial energy

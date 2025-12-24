@@ -52,6 +52,7 @@ class Solver {
     int countUnsatisfiedClauses(const vector<bool>& assign) const;
     vector<bool> getInitialAssignment();
     vector<bool> getNeighbourAssignment(vector<bool> assignment);
+    void setInitialParams();
 
     public:
         Solver();
