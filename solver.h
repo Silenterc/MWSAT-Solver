@@ -31,7 +31,6 @@ class Solver {
     SAParams params;
     std::mt19937 rng;
 
-    double penaltyCoefficient;
     vector<bool> bestAssignment;
     double bestEnergy = 0;
     int bestWeight = 0;
@@ -41,7 +40,6 @@ class Solver {
     double cool(double T) const;
     bool frozen(double T) const;
     bool equilibrium(int iterAtTemp) const;
-    long long computeMaxStagnation() const;
 
     double computeBasePenalty() const;
 
@@ -63,9 +61,6 @@ class Solver {
         void printBestSolution(std::ostream& os) const;
         void printCompleteSolution() const;
         void printCompleteFormattedSolution(std::ostream& os) const;
-
-
-
 };
 
 

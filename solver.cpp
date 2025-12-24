@@ -37,25 +37,6 @@ bool Solver::equilibrium(int iterAtTemp) const {
     return iterAtTemp >= params.itersPerTemp;
 }
 
-long long Solver::computeMaxStagnation() const {
-    // Compute the cooling steps
-    // It is: K = (ln(T_min) - ln(T_start)) / ln(alpha)
-    double numerator = log(params.tempMin) - log(params.tempStart);
-    double denominator = log(params.alpha);
-
-    long long coolingSteps = static_cast<long long>(ceil(numerator / denominator));
-
-    long long totalIterations = coolingSteps * params.itersPerTemp;
-
-    // Set to 50%, TODO experiment
-    long long calculatedStagnation = totalIterations / 2;
-
-    // If there are not enough steps
-    long long minimumSteps = static_cast<long long>(numVars) * 100;
-
-    return max(calculatedStagnation, minimumSteps);
-}
-
 // Base penalty for clause - max weight
 double Solver::computeBasePenalty() const {
     int maxW = 0;
@@ -297,10 +278,6 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
         return;
     }
     params = inParams;
-    // TESTED AND DOESNT HELP, SO ITS 1
-    penaltyCoefficient = 1.0;
-    long long maxStagnation = computeMaxStagnation();
-    long long stagnationCounter = 0;
     setInitialParams();
     vector<bool> current = getInitialAssignment();
 
@@ -357,7 +334,6 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
                 Ecur = Enew;
                 unsatCur = unsatNew;
                 weightCur = weightNew;
-                stagnationCounter = 0;
 
                 // We possibly update the best state
                 if (unsatCur == 0) {
@@ -371,23 +347,14 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
                     bestWeight = weightCur;
                     bestAssignment = current;
                 }
-            } else {
-                stagnationCounter++;
             }
 
-            // if (stagnationCounter >= maxStagnation) {
-            //     // RESET THE WHOLE RUN
-            //     stagnationCounter = 0;
-            //     current = getInitialAssignment();
-            //     Ecur = energy(current, penalty, unsatCur, weightCur);
-            // }
             if (trace) {
                 int satisfied = numClauses - unsatCur;
                 (*trace) << steps << "," << Ecur << "," << satisfied << "," << unsatCur << "," << weightCur << "\n";
             }
             iter++;
         }
-       // penalty *= penaltyCoefficient;
     }
 }
 
