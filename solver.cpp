@@ -39,10 +39,8 @@ bool Solver::equilibrium(int iterAtTemp) const {
 
 // Base penalty for clause - max weight
 double Solver::computeBasePenalty() const {
-    int maxW = 0;
     int sumW = 0;
     for (const int w : weights) {
-        maxW  = max(maxW, w);
         sumW += w;
     }
     return sumW;
@@ -360,7 +358,6 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
 
 // Corresponds to the .dat format
 void Solver::printBestSolution(ostream& os) const {
-    // todo: probably print the debug info, not just the .dat results
     if (bestAssignment.empty()) {
         cerr << "Solver::printBestSolution: no solution available.\n";
         return;
