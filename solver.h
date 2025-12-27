@@ -63,10 +63,4 @@ class Solver {
         void printCompleteFormattedSolution(std::ostream& os) const;
 };
 
-
-
-
-
-
-
 #endif //KOP2_SOLVER_H

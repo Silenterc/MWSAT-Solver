@@ -13,7 +13,7 @@
 
 Solver::Solver() : rng(random_device{}()) {}
 
-void Solver::setSeed(mt19937::result_type seed) {
+void Solver::setSeed(const mt19937::result_type seed) {
     rng.seed(seed);
 }
 
@@ -33,7 +33,7 @@ bool Solver::frozen(const double T) const {
     return T <= params.tempMin;
 }
 
-bool Solver::equilibrium(int iterAtTemp) const {
+bool Solver::equilibrium(const int iterAtTemp) const {
     return iterAtTemp >= params.itersPerTemp;
 }
 
@@ -167,7 +167,7 @@ bool Solver::load(const string& filename) {
         }
 
         if (!clause.empty()) {
-            clauses.emplace_back(move(clause));
+            clauses.emplace_back(std::move(clause));
         }
     }
 
@@ -178,8 +178,8 @@ int Solver::countUnsatisfiedClauses(const vector<bool>& assign) const {
     int unsat = 0;
     for (const auto& clause : clauses) {
         bool satisfied = false;
-        for (int lit : clause) {
-            int varIdx = abs(lit) - 1;
+        for (const int lit : clause) {
+            const int varIdx = abs(lit) - 1;
             bool val = assign[varIdx];
             if ((lit > 0 && val) || (lit < 0 && !val)) {
                 satisfied = true;
@@ -209,8 +209,8 @@ vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) {
     for (int ci = 0; ci < clauses.size(); ci++) {
         const auto& clause = clauses[ci];
         bool satisfied = false;
-        for (int lit : clause) {
-            int varIdx = abs(lit) - 1;
+        for (const int lit : clause) {
+            const int varIdx = abs(lit) - 1;
             bool val = assignment[varIdx];
             if ((lit > 0 && val) || (lit < 0 && !val)) {
                 satisfied = true;
@@ -222,14 +222,15 @@ vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) {
         }
     }
 
+    // If all are satisfied, we flip a random one
     if (unsatisfiedIdx.empty()) {
         uniform_int_distribution indexDist(0, numVars - 1);
-        int index = indexDist(rng);
+        const int index = indexDist(rng);
         assignment[index] = !assignment[index];
         return assignment;
     }
 
-    // 1) pick a random unsatisfied clause
+    // Pick a random unsatisfied clause
     uniform_int_distribution<size_t> unsatDist(0, unsatisfiedIdx.size() - 1);
     const auto& clause = clauses[unsatisfiedIdx[unsatDist(rng)]];
 
@@ -248,12 +249,12 @@ vector<bool> Solver::getNeighbourAssignment(vector<bool> assignment) {
         // I find the literal that helps the most
         int bestNetGain = -9999999;
 
-        for (int lit : clause) {
-            int varIdx = abs(lit) - 1;
+        for (const int lit : clause) {
+            const int varIdx = abs(lit) - 1;
 
             assignment[varIdx] = !assignment[varIdx];
-            int currentUnsat = countUnsatisfiedClauses(assignment);
-            int currentGain = -currentUnsat;
+            const int currentUnsat = countUnsatisfiedClauses(assignment);
+            const int currentGain = -currentUnsat;
 
             assignment[varIdx] = !assignment[varIdx];
 
@@ -276,6 +277,7 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
         return;
     }
     params = inParams;
+    // We essentially overwrite the input params, cuz this is black box phase now
     setInitialParams();
     vector<bool> current = getInitialAssignment();
 
@@ -328,7 +330,7 @@ void Solver::solve(const SAParams& inParams, ostream* trace) {
 
             if (accept) {
                 // We accept the new state
-                current = move(neighbour);
+                current = std::move(neighbour);
                 Ecur = Enew;
                 unsatCur = unsatNew;
                 weightCur = weightNew;
